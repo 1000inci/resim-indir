@@ -219,6 +219,158 @@ def get_image(filename):
     return send_file(file_path)
 
 
+@app.route('/', methods=['GET'])
+def dashboard():
+    """Resim İndir Dashboard"""
+    return '''
+    <!DOCTYPE html>
+    <html lang="tr">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Resim İndir</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; }
+            .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 40px 20px; border-radius: 10px; margin-bottom: 30px; }
+            .header h1 { font-size: 2em; margin-bottom: 10px; }
+            .header p { opacity: 0.9; }
+            .card { background: white; border-radius: 10px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+            .card h2 { color: #f5576c; margin-bottom: 15px; font-size: 1.3em; }
+            .form-group { margin-bottom: 15px; }
+            label { display: block; margin-bottom: 5px; font-weight: 500; }
+            textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 1em; font-family: monospace; }
+            textarea:focus { outline: none; border-color: #f5576c; box-shadow: 0 0 0 3px rgba(245, 87, 108, 0.1); }
+            button { background: #f5576c; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; transition: background 0.3s; }
+            button:hover { background: #d63a51; }
+            button.secondary { background: #6b7280; }
+            button.secondary:hover { background: #4b5563; }
+            .result { background: #f9f9f9; padding: 15px; border-radius: 5px; margin-top: 15px; border-left: 4px solid #f5576c; }
+            .success { border-left-color: #10b981; }
+            .error { border-left-color: #ef4444; }
+            .loading { display: none; color: #f5576c; margin-top: 10px; }
+            .stats { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+            .stat { flex: 1; min-width: 120px; background: white; border-radius: 10px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+            .stat .num { font-size: 2em; font-weight: bold; color: #f5576c; }
+            .stat .lbl { color: #666; font-size: 0.9em; margin-top: 5px; }
+            .img-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 15px; }
+            .img-item { border: 1px solid #eee; border-radius: 5px; padding: 8px; font-size: 0.8em; word-break: break-all; }
+            pre { white-space: pre-wrap; word-break: break-all; font-size: 0.85em; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🖼️ Resim İndir</h1>
+                <p>Model listesinden toplu ürün görseli indir</p>
+            </div>
+
+            <div class="stats">
+                <div class="stat"><div class="num" id="stat-images">-</div><div class="lbl">İndirilen Görsel</div></div>
+                <div class="stat"><div class="num" id="stat-failed">-</div><div class="lbl">Başarısız Model</div></div>
+            </div>
+
+            <div class="card">
+                <h2>⬇️ İndirme Başlat</h2>
+                <div class="form-group">
+                    <label for="models">Model Listesi (satır satır):</label>
+                    <textarea id="models" placeholder="ABC-123&#10;XYZ-456&#10;Model adı" rows="6"></textarea>
+                </div>
+                <button onclick="startDownload()">İndirmeyi Başlat</button>
+                <button class="secondary" onclick="refreshAll()">🔄 Yenile</button>
+                <div class="loading" id="dl-loading">İşleniyor...</div>
+                <div id="dl-result"></div>
+            </div>
+
+            <div class="card">
+                <h2>📊 İndirme Durumu</h2>
+                <div id="job-status">Aktif iş yok. İndirme başlatınca burada görünür.</div>
+            </div>
+
+            <div class="card">
+                <h2>🖼️ İndirilen Görseller</h2>
+                <div id="images-list">Yükleniyor...</div>
+            </div>
+
+            <div class="card">
+                <h2>⚠️ Başarısız Modeller</h2>
+                <div id="failed-list">Yükleniyor...</div>
+            </div>
+        </div>
+
+        <script>
+            let currentJob = null;
+            let pollTimer = null;
+
+            async function startDownload() {
+                const text = document.getElementById('models').value.trim();
+                const models = text.split('\\n').map(m => m.trim()).filter(m => m);
+                if (!models.length) { alert('En az bir model girin'); return; }
+                document.getElementById('dl-loading').style.display = 'block';
+                document.getElementById('dl-result').innerHTML = '';
+                try {
+                    const res = await fetch('/api/download/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({models}) });
+                    const data = await res.json();
+                    document.getElementById('dl-loading').style.display = 'none';
+                    document.getElementById('dl-result').innerHTML = `<div class="result ${res.ok ? 'success' : 'error'}"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+                    if (data.job_id) { currentJob = data.job_id; pollStatus(); }
+                } catch (e) {
+                    document.getElementById('dl-loading').style.display = 'none';
+                    document.getElementById('dl-result').innerHTML = `<div class="result error">${e.message}</div>`;
+                }
+            }
+
+            async function pollStatus() {
+                if (!currentJob) return;
+                try {
+                    const res = await fetch('/api/download/status/' + currentJob);
+                    const data = await res.json();
+                    document.getElementById('job-status').innerHTML = `<div class="result"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+                    if (data.status === 'running') {
+                        clearTimeout(pollTimer);
+                        pollTimer = setTimeout(pollStatus, 3000);
+                    } else {
+                        refreshAll();
+                    }
+                } catch (e) { /* sessizce gec */ }
+            }
+
+            async function loadImages() {
+                try {
+                    const res = await fetch('/api/images');
+                    const data = await res.json();
+                    document.getElementById('stat-images').textContent = data.total || 0;
+                    if (data.total > 0) {
+                        document.getElementById('images-list').innerHTML = '<div class="img-list">' +
+                            data.images.map(img => `<div class="img-item">📄 ${img.filename}<br><small>${(img.size/1024).toFixed(1)} KB</small></div>`).join('') + '</div>';
+                    } else {
+                        document.getElementById('images-list').innerHTML = 'Henüz görsel indirilmedi.';
+                    }
+                } catch (e) { document.getElementById('images-list').innerHTML = 'Yüklenemedi.'; }
+            }
+
+            async function loadFailed() {
+                try {
+                    const res = await fetch('/api/failed-models');
+                    const data = await res.json();
+                    document.getElementById('stat-failed').textContent = data.total || 0;
+                    if (data.total > 0) {
+                        document.getElementById('failed-list').innerHTML = '<pre>' + data.models.join('\\n') + '</pre>';
+                    } else {
+                        document.getElementById('failed-list').innerHTML = 'Başarısız model yok. 👍';
+                    }
+                } catch (e) { document.getElementById('failed-list').innerHTML = 'Yüklenemedi.'; }
+            }
+
+            function refreshAll() { loadImages(); loadFailed(); }
+            refreshAll();
+        </script>
+    </body>
+    </html>
+    '''
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """Sağlık kontrolü"""
