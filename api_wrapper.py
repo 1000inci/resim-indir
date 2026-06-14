@@ -117,19 +117,22 @@ class ResimIndirManager:
 
     @staticmethod
     def list_downloaded_images():
-        """İndirilen görselleri listele"""
+        """İndirilen görselleri listele (alt klasörler dahil)"""
         if not os.path.exists(RESIMLER_DIR):
             return []
 
         images = []
-        for file in os.listdir(RESIMLER_DIR):
-            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                file_path = os.path.join(RESIMLER_DIR, file)
-                images.append({
-                    'filename': file,
-                    'size': os.path.getsize(file_path),
-                    'created': datetime.fromtimestamp(os.path.getctime(file_path)).isoformat()
-                })
+        for root, dirs, files in os.walk(RESIMLER_DIR):
+            for file in files:
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, RESIMLER_DIR)
+                    images.append({
+                        'filename': file,
+                        'path': rel_path,
+                        'size': os.path.getsize(file_path),
+                        'created': datetime.fromtimestamp(os.path.getctime(file_path)).isoformat()
+                    })
 
         return sorted(images, key=lambda x: x['created'], reverse=True)
 
@@ -308,24 +311,25 @@ def dashboard():
                     </div>
                 </div>
                 <button onclick="startDownload()">İndirmeyi Başlat</button>
-                <button class="secondary" onclick="refreshAll()">🔄 Yenile</button>
+                <button class="secondary" onclick="refreshAll()">🔄 İstatistikleri Güncelle</button>
                 <div class="loading" id="dl-loading">İşleniyor...</div>
                 <div id="dl-result"></div>
             </div>
 
             <div class="card">
                 <h2>📊 İndirme Durumu</h2>
-                <div id="job-status">Aktif iş yok. İndirme başlatınca burada görünür.</div>
+                <div id="job-status" style="display: none;"></div>
+                <div id="status-summary" style="text-align: center; color: #999; padding: 20px;">Henüz iş yok</div>
             </div>
 
             <div class="card">
-                <h2>🖼️ İndirilen Görseller</h2>
-                <div id="images-list">Yükleniyor...</div>
+                <h2>🖼️ İndirilen Görseller <span id="image-count" style="color: #f5576c;">(0)</span></h2>
+                <div id="images-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 15px;">Yükleniyor...</div>
             </div>
 
             <div class="card">
                 <h2>⚠️ Başarısız Modeller</h2>
-                <div id="failed-list">Yükleniyor...</div>
+                <div id="failed-list" style="color: #999;">Başarısız model yok. ✅</div>
             </div>
         </div>
 
@@ -350,11 +354,15 @@ def dashboard():
                     });
                     const data = await res.json();
                     document.getElementById('dl-loading').style.display = 'none';
-                    document.getElementById('dl-result').innerHTML = `<div class="result ${res.ok ? 'success' : 'error'}"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
-                    if (data.job_id) { currentJob = data.job_id; pollStatus(); }
+                    if (res.ok) {
+                        document.getElementById('dl-result').innerHTML = `<div class="result success">✅ İndirme başladı... (${models.length} model, ${category || 'jenerik'} arama)</div>`;
+                        if (data.job_id) { currentJob = data.job_id; pollStatus(); }
+                    } else {
+                        document.getElementById('dl-result').innerHTML = `<div class="result error">❌ Hata: ${data.error || 'Bilinmeyen hata'}</div>`;
+                    }
                 } catch (e) {
                     document.getElementById('dl-loading').style.display = 'none';
-                    document.getElementById('dl-result').innerHTML = `<div class="result error">${e.message}</div>`;
+                    document.getElementById('dl-result').innerHTML = `<div class="result error">❌ ${e.message}</div>`;
                 }
             }
 
@@ -363,12 +371,19 @@ def dashboard():
                 try {
                     const res = await fetch('/api/download/status/' + currentJob);
                     const data = await res.json();
-                    document.getElementById('job-status').innerHTML = `<div class="result"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
-                    if (data.status === 'running') {
+                    const status = data.status || 'unknown';
+                    const statusText = status === 'running' ? '⏳ İşleniyor...' :
+                                       status === 'completed' ? '✅ Tamamlandı' :
+                                       status === 'error' ? '❌ Hata oluştu' : '⏸️ Durumu bilinmiyor';
+                    document.getElementById('status-summary').innerHTML = `${statusText}<br><small style="color: #666; margin-top: 10px;">
+                        ${data.models_count} model / ${data.category ? data.category : 'Jenerik arama'} / Max ${data.max_per_model} resim
+                    </small>`;
+                    document.getElementById('job-status').style.display = 'none';
+                    if (status === 'running') {
                         clearTimeout(pollTimer);
                         pollTimer = setTimeout(pollStatus, 3000);
                     } else {
-                        refreshAll();
+                        setTimeout(refreshAll, 2000);
                     }
                 } catch (e) { /* sessizce gec */ }
             }
@@ -378,13 +393,19 @@ def dashboard():
                     const res = await fetch('/api/images');
                     const data = await res.json();
                     document.getElementById('stat-images').textContent = data.total || 0;
+                    document.getElementById('image-count').textContent = `(${data.total || 0})`;
                     if (data.total > 0) {
-                        document.getElementById('images-list').innerHTML = '<div class="img-list">' +
-                            data.images.map(img => `<div class="img-item">📄 ${img.filename}<br><small>${(img.size/1024).toFixed(1)} KB</small></div>`).join('') + '</div>';
+                        document.getElementById('images-list').innerHTML = data.images.map(img => `
+                            <div style="background: #1a1a1a; border-radius: 8px; padding: 10px; text-align: center; border: 1px solid #333;">
+                                <div style="font-size: 2em; margin-bottom: 5px;">🖼️</div>
+                                <div style="font-size: 0.8em; word-break: break-all; color: #aaa; margin-bottom: 5px;">${img.filename}</div>
+                                <small style="color: #666;">${(img.size/1024).toFixed(1)} KB</small>
+                            </div>
+                        `).join('');
                     } else {
-                        document.getElementById('images-list').innerHTML = 'Henüz görsel indirilmedi.';
+                        document.getElementById('images-list').innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #666; padding: 40px;">Henüz görsel indirilmedi. 📭</div>';
                     }
-                } catch (e) { document.getElementById('images-list').innerHTML = 'Yüklenemedi.'; }
+                } catch (e) { document.getElementById('images-list').innerHTML = '<div style="grid-column: 1/-1; color: #f55;">Yüklenemedi</div>'; }
             }
 
             async function loadFailed() {
@@ -393,9 +414,10 @@ def dashboard():
                     const data = await res.json();
                     document.getElementById('stat-failed').textContent = data.total || 0;
                     if (data.total > 0) {
-                        document.getElementById('failed-list').innerHTML = '<pre>' + data.models.join('\\n') + '</pre>';
+                        document.getElementById('failed-list').innerHTML = '<ul style="margin: 0; padding-left: 20px;">' +
+                            data.models.map(m => `<li style="margin: 5px 0; color: #f5576c;">❌ ${m}</li>`).join('') + '</ul>';
                     } else {
-                        document.getElementById('failed-list').innerHTML = 'Başarısız model yok. 👍';
+                        document.getElementById('failed-list').innerHTML = '✅ Başarısız model yok.';
                     }
                 } catch (e) { document.getElementById('failed-list').innerHTML = 'Yüklenemedi.'; }
             }
