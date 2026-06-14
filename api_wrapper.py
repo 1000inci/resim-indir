@@ -56,7 +56,7 @@ class ResimIndirManager:
             }
 
     @staticmethod
-    def start_download(job_id, models, options=None):
+    def start_download(job_id, models, category="", max_per_model=3):
         """Arka planda indirme başlat"""
         job_file = os.path.join(UPLOADS_DIR, f'models_{job_id}.txt')
 
@@ -69,6 +69,8 @@ class ResimIndirManager:
             'status': 'running',
             'started': datetime.now().isoformat(),
             'models_count': len(models),
+            'category': category,
+            'max_per_model': max_per_model,
             'progress': 0,
             'completed': 0,
             'failed': 0,
@@ -78,9 +80,15 @@ class ResimIndirManager:
         # Arka planda indirmeyi çalıştır
         def run_download():
             try:
-                # Python script'ini çalıştır
+                # Python script'ini çalıştır: resim.py <dosya> [kategori] [max_per_model]
+                cmd = ['python3', os.path.join(os.path.dirname(__file__), 'resim.py'), job_file]
+                if category:
+                    cmd.append(category)
+                if max_per_model and max_per_model != 3:
+                    cmd.append(str(max_per_model))
+
                 result = subprocess.run(
-                    ['python3', os.path.join(os.path.dirname(__file__), 'resim.py'), job_file],
+                    cmd,
                     cwd=os.path.dirname(__file__),
                     capture_output=True,
                     timeout=3600
@@ -163,17 +171,27 @@ def api_download_start():
     """İndirme işlemini başlat"""
     data = request.get_json()
     models = data.get('models', [])
+    category = data.get('category', '')
+    max_per_model = data.get('max_per_model', 3)
 
     if not models:
         return jsonify({'error': 'Model listesi gerekli'}), 400
 
+    # Max per model validate
+    try:
+        max_per_model = max(1, int(max_per_model))
+    except (ValueError, TypeError):
+        max_per_model = 3
+
     job_id = f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    ResimIndirManager.start_download(job_id, models)
+    ResimIndirManager.start_download(job_id, models, category, max_per_model)
 
     return jsonify({
         'job_id': job_id,
         'status': 'started',
-        'models_count': len(models)
+        'models_count': len(models),
+        'category': category,
+        'max_per_model': max_per_model
     })
 
 
@@ -277,6 +295,18 @@ def dashboard():
                     <label for="models">Model Listesi (satır satır):</label>
                     <textarea id="models" placeholder="ABC-123&#10;XYZ-456&#10;Model adı" rows="6"></textarea>
                 </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label for="category">Kategori (isteğe bağlı):</label>
+                        <input type="text" id="category" placeholder="örn: kamera, araba, bilgisayar" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 5px;">
+                        <small style="color: #666; display: block; margin-top: 5px;">Boş bırakırsan jenerik arama yapılır</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="max_per_model">Model Başına Maks Resim:</label>
+                        <input type="number" id="max_per_model" value="3" min="1" max="20" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 5px;">
+                        <small style="color: #666; display: block; margin-top: 5px;">Varsayılan: 3</small>
+                    </div>
+                </div>
                 <button onclick="startDownload()">İndirmeyi Başlat</button>
                 <button class="secondary" onclick="refreshAll()">🔄 Yenile</button>
                 <div class="loading" id="dl-loading">İşleniyor...</div>
@@ -306,11 +336,18 @@ def dashboard():
             async function startDownload() {
                 const text = document.getElementById('models').value.trim();
                 const models = text.split('\\n').map(m => m.trim()).filter(m => m);
+                const category = document.getElementById('category').value.trim();
+                const max_per_model = parseInt(document.getElementById('max_per_model').value) || 3;
+
                 if (!models.length) { alert('En az bir model girin'); return; }
                 document.getElementById('dl-loading').style.display = 'block';
                 document.getElementById('dl-result').innerHTML = '';
                 try {
-                    const res = await fetch('/api/download/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({models}) });
+                    const res = await fetch('/api/download/start', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({models, category, max_per_model})
+                    });
                     const data = await res.json();
                     document.getElementById('dl-loading').style.display = 'none';
                     document.getElementById('dl-result').innerHTML = `<div class="result ${res.ok ? 'success' : 'error'}"><pre>${JSON.stringify(data, null, 2)}</pre></div>`;
