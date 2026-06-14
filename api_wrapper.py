@@ -222,7 +222,8 @@ INDEX_HTML = """<!DOCTYPE html>
       </div>
     </div>
     <div class="row">
-      <button class="primary" id="startBtn">🔍 Aramayı Başlat</button>
+      <button class="primary" id="startBtn" title="Önceki görselleri siler, sadece bu aramanın sonuçlarını gösterir">🔍 Aramayı Başlat</button>
+      <button id="appendBtn" title="Önceki görselleri korur, bu aramanın YENİ sonuçlarını üzerine ekler">➕ Aramaya Ekle</button>
       <span class="muted" id="count"></span>
     </div>
     <div class="status" id="status"></div>
@@ -265,23 +266,27 @@ function showStatus(cls, html) {
   el.innerHTML = html;
 }
 
-async function start() {
+function setBusy(b) { $('startBtn').disabled = b; $('appendBtn').disabled = b; }
+
+async function start(append) {
   const models = parseModels();
   if (!models.length) { showStatus('err', '⚠️ En az bir arama (model) girin.'); return; }
   const category = $('category').value.trim();
   const max_per_model = parseInt($('maxPer').value) || 3;
-  $('startBtn').disabled = true;
-  showStatus('run', '<span class="spin"></span> Arama başlatılıyor... (önceki sonuçlar temizleniyor)');
+  setBusy(true);
+  showStatus('run', '<span class="spin"></span> ' +
+    (append ? 'Aramaya ekleniyor... (önceki görseller korunuyor)'
+            : 'Arama başlatılıyor... (önceki sonuçlar temizleniyor)'));
   try {
     const r = await fetch('api/download/start', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ models, category, max_per_model })
+      body: JSON.stringify({ models, category, max_per_model, append })
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Başlatılamadı');
     poll(d.job_id, models.length);
   } catch(e) {
-    showStatus('err', '❌ ' + e.message); $('startBtn').disabled = false;
+    showStatus('err', '❌ ' + e.message); setBusy(false);
   }
 }
 
@@ -297,7 +302,7 @@ function poll(jobId, total) {
         showStatus('run', '<span class="spin"></span> ' + total + ' arama yapılıyor, görseller indiriliyor... (' + sec + ' sn)');
       } else {
         clearInterval(pollTimer);
-        $('startBtn').disabled = false;
+        setBusy(false);
         if (d.status === 'completed') showStatus('ok', '✓ Tamamlandı (' + sec + ' sn). Galeri güncellendi.');
         else showStatus('err', '❌ Hata: ' + (d.error || 'indirme başarısız'));
         loadGallery(); loadFailed();
@@ -346,7 +351,8 @@ $('clearBtn').addEventListener('click', async () => {
   await fetch('api/images/clear', { method:'POST' });
   loadGallery(); loadFailed(); showStatus('ok', '🗑️ Sunucudan silindi.');
 });
-$('startBtn').addEventListener('click', start);
+$('startBtn').addEventListener('click', () => start(false));
+$('appendBtn').addEventListener('click', () => start(true));
 loadGallery(); loadFailed();
 </script>
 </body>
@@ -387,6 +393,8 @@ def api_download_start():
     models = data.get('models', [])
     category = (data.get('category') or '').strip()
     max_per_model = data.get('max_per_model', 3)
+    # append=True ise önceki görseller KORUNUR (üzerine eklenir), aksi halde temizlenir
+    append = bool(data.get('append', False))
 
     if not models:
         return jsonify({'error': 'Model listesi gerekli'}), 400
@@ -397,8 +405,9 @@ def api_download_start():
     except (ValueError, TypeError):
         max_per_model = 3
 
-    # Her yeni arama öncesi sunucudaki önceki görselleri temizle (birikme olmasın)
-    _clear_images()
+    # Yeni aramada (ekleme degilse) sunucudaki önceki görselleri temizle
+    if not append:
+        _clear_images()
 
     job_id = f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     ResimIndirManager.start_download(job_id, models, category, max_per_model)
@@ -408,7 +417,8 @@ def api_download_start():
         'status': 'started',
         'models_count': len(models),
         'category': category,
-        'max_per_model': max_per_model
+        'max_per_model': max_per_model,
+        'append': append
     })
 
 

@@ -57,8 +57,8 @@ class ImageDownloader:
             queries = [f"{model_name} {self.category}", model_name]
         else:
             queries = [model_name]
-        # Maks görselin biraz üstünü iste (filtre/elenenler için)
-        fetch_count = max(8, self.max_per_model * 3)
+        # Maks görselin birkaç katını iste (zaten inenler atlanacağı için geniş havuz lazım)
+        fetch_count = max(15, self.max_per_model * 5)
         all_image_urls = []
         for q in queries:
             try:
@@ -75,7 +75,7 @@ class ImageDownloader:
             except Exception as e:
                 print(f"  ⚠️ Arama hatası: {str(e)[:80]}")
                 continue
-        return list(dict.fromkeys(all_image_urls))[: self.max_per_model * 2]
+        return list(dict.fromkeys(all_image_urls))[: self.max_per_model * 5]
 
     def download_image(self, image_url, model_name, attempt=1):
         """Gosel indir ve kaydet"""
@@ -102,10 +102,11 @@ class ImageDownloader:
         filename = f"{safe_name}_{file_hash}{extension}"
         filepath = os.path.join(self.download_folder, filename)
 
-        # Aynı dosya zaten var mı kontrol et
+        # Aynı dosya zaten var mı kontrol et (tekrar taramada limite SAYILMAZ,
+        # boylece "Aramaya Ekle" modunda yeni/farkli gorseller gelir)
         if os.path.exists(filepath):
             print(f"  ⏭️  Zaten var: {filename}")
-            return True
+            return 'exists'
 
         try:
             print(f"  📥 İndiriliyor: {image_url[:60]}...")
@@ -159,7 +160,9 @@ class ImageDownloader:
         for i, img_url in enumerate(all_image_urls, 1):
             if downloaded >= self.max_per_model:
                 break
-            if self.download_image(img_url, model_name, i):
+            res = self.download_image(img_url, model_name, i)
+            # Sadece YENİ indirilen görsel limite sayılır; 'exists' ve False sayılmaz
+            if res is True:
                 downloaded += 1
             time.sleep(1)
 
