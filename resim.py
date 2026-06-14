@@ -305,22 +305,29 @@ def choose_txt_file():
             return os.path.join(script_dir, txt_files[int(choice) - 1])
         print("⚠️ Geçersiz seçim, tekrar deneyin.")
 
-def main():
+def main(txt_path=None):
     print("\nDAHUA GÖRSEL İNDİRİCİ")
     print("-" * 40)
 
-    txt_path = choose_txt_file()
+    # Komut satırı argümanından dosya yolu alınabilir
+    if not txt_path:
+        txt_path = choose_txt_file()
+
     if not txt_path:
         print("Çıkılıyor.")
         return
+
     print(f"✅ Kullanılacak dosya: {txt_path}")
 
     downloader = DahuaImageDownloader()
     downloader.run(txt_path)
 
 if __name__ == "__main__":
+    import sys
     try:
-        main()
+        # Komut satırı argümanı olarak model dosya yolu al
+        txt_path = sys.argv[1] if len(sys.argv) > 1 else None
+        main(txt_path)
     except KeyboardInterrupt:
         print("\n\n⚠️ İşlem kullanıcı tarafından durduruldu.")
     except Exception as e:

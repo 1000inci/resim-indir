@@ -80,7 +80,7 @@ class ResimIndirManager:
             try:
                 # Python script'ini çalıştır
                 result = subprocess.run(
-                    ['python', os.path.join(os.path.dirname(__file__), 'resim.py'), job_file],
+                    ['python3', os.path.join(os.path.dirname(__file__), 'resim.py'), job_file],
                     cwd=os.path.dirname(__file__),
                     capture_output=True,
                     timeout=3600
